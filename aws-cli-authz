@@ -1,0 +1,895 @@
+#!/usr/bin/env node
+
+//Open config
+// Add the Filesystem module.
+const fs = require('fs');
+const configFile = './config.json';
+
+var configuration
+
+if (!fs.existsSync(configFile)) {
+  process.stdout.write('\n\x1b[33mINFO: Config not found, lanching configuration manager...\x1b[0m\n');
+  configManager('new')
+  process.exit(1);
+} else {
+  try {
+    configuration = fs.readFileSync('./config.json', 'utf8');
+  } catch(error) {
+    process.stdout.write('\n\x1b[31mERROR: There was a problem reading the configuration. The error retuened was as follows...\x1b[0m\n');
+    process.exit(1);
+  }
+}
+
+configuration = JSON.parse(configuration);
+
+// Auth0 options
+//const auth0Options = {
+//    domain: 'inspoadam.eu.auth0.com',
+//    saml: {
+//      connection: '72Z41E2OECAzW4edyLRVEI9fcBk2s0CQ'
+//    },
+//    oidc: {
+//      clientId: '6MK5C4PtlPho9djyFiahxmuETbka6NVD',
+//    }
+//}
+
+// AWS options
+//const awsOptions = {
+//  defaultProtocol: 'oidc',
+//  profileName: 'default',
+//  oidc: {
+//    principalArn: 'arn:aws:iam::817609751666:oidc-provider/inspoadam.eu.auth0.com/',
+//    roleArn: 'arn:aws:iam::817609751666:role/IAM-Admin-OIDC'
+//  },
+//  saml: {
+//    principalArn: 'arn:aws:iam::817609751666:saml-provider/Auth0-IdP-SAML',
+//    roleArn: 'arn:aws:iam::817609751666:role/IAM-Admin-SAML'
+//  }
+//}
+
+// JWT Verify options
+const jwtOptions = {
+  algorithm: configuration.globalOptions.jwtAlgorithm
+}
+
+// Debug option - verbose output when set to true
+const debug = configuration.globalOptions.debug;
+
+// Serer options
+//const serverOptions = {
+//  useTls: false,
+//  fileRoot: process.env.HOME,
+//  privateKeyFile: '/certauth/acmecorp.com.key',
+//  certificateFile: '/certauth/acmecorp.com.crt',
+//  returnDomain: 'app.acmecorp.com',
+//  port: 8443
+//}
+
+// Set web protocol based on serverOptions.useTls setting
+var webProtocol;
+
+if (configuration.globalOptions.useTls === true) {
+  webProtocol = 'https';
+} else {
+  webProtocol = 'http';
+}
+
+
+// Command line arguments
+var authMode = configuration.authorisationOptions.defaultProtocol;
+var operations;
+var paramaters;
+
+for (i = 0; i < process.argv.length; i++) {
+  switch (process.argv[i]) {
+    case '-a':
+    case '--a':
+    case '--authentication-protocol':
+      operations = ['o', 'oidc', 's', 'saml'];
+      if (operations.indexOf(process.argv[i + 1]) > -1) {
+        authMode = process.argv[i+1]
+      } else {
+        process.stdout.write('\nERROR: Invalid command line argument for authentication protocol.\n\n');
+        process.stdout.write('usage: aws-set-token -a [o|oidc|s|saml]\n\n');
+        process.stdout.write('  o | oidc - use OpenID Connect.\n');
+        process.stdout.write('  s | saml - use SAML.\n\n');
+        process.stdout.write('If the argument is omitted, the default specified in the configuration will be used.\n');
+        process.exit(1);
+      }
+      break;
+    case '-c':
+    case '--c':
+    case '--config':
+      operations = ['s', 'show', 'u', 'update'];
+      parameters = ['all', 'auth0', 'aws', 'server'];
+
+      console.log('Parameter: ' + process.argv[i + 2])
+
+      if (operations.indexOf(process.argv[i + 1]) > -1 && ((parameters.indexOf(process.argv[i + 2]) > -1) || (process.argv[i + 2] == null))) {
+        configManager(process.argv[i + 1], process.argv[i + 2]);
+      } else {
+        process.stdout.write('\nERROR: Invalid command line argument for config.\n\n');
+        process.stdout.write('usage: aws-set-token -c [s|show|u|update] [all|auth0|aws|server|debug]\n\n');
+        process.stdout.write('  s | show [parameter]   - show current configuration.\n');
+        process.stdout.write('  u | update [parameter] - update configuration.\n\n');
+        process.stdout.write('  Valid parameters are as follows. Default option is "all":\n\n');
+        process.stdout.write('      all     - full configuration\n');
+        process.stdout.write('      auth0   - auth0 configuration\n');
+        process.stdout.write('      aws     - aws configuration\n');
+        process.stdout.write('      server  - server configuration\n\n');
+        process.stdout.write('      debug  - server configuration\n\n');
+
+      }
+      process.exit(1);
+      break;
+    case '-h':
+    case '--h':
+    case '--help':
+      process.stdout.write('\nusage: aws-cli-authz [-a oidc|saml] [-c] [-h]\n\n');
+      process.stdout.write('optional arguments:\n');
+      process.stdout.write('  -a --a --authentication-protocol    specify the protocol to use. options are "oidc" (OpenID Connect) and "saml".\n\n');
+      process.stdout.write('  -c --c --config                     start configuration editor or show current configuration\n');
+      process.stdout.write('  -h --h --help                       show this help messge and exit\n');
+      process.stdout.write('Options for -a --a and --authentication-protocol:\n\n');
+      process.stdout.write('  o | oidc - use OpenID Connect.\n');
+      process.stdout.write('  s | saml - use SAML.\n');
+      process.stdout.write('Note: If the "-a" argument is omitted, the default specified in the configuration will be used. If no default\n');
+      process.stdout.write('is set, an error will be raised.\n\n');
+      process.stdout.write('Options for -c --c and --config:\n\n');
+      process.stdout.write('  s | show [parameter]   - show current configuration.\n');
+      process.stdout.write('  c | change [parameter] - change configuration.\n\n');
+      process.stdout.write('  Valid parameters are as follows. Default option is "all":\n\n');
+      process.stdout.write('      global - global configuration\n');
+      process.stdout.write('      authz  - authorisation configuration\n');
+      process.stdout.write('      debug  - show/change debug (verbose) output\n\n');
+      process.exit(1);
+      break;
+
+  }
+}
+
+// Add the modules that will be used
+const open = require('open');
+const express = require('express');
+const https = require('https');
+const http = require('http');
+const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
+const jwksClient = require('jwks-rsa');
+
+const client = jwksClient({ jwksUri: 'https://' + configuration.globalOptions.auth0Domain + '/.well-known/jwks.json' });
+const verifier = base64URLEncode(crypto.randomBytes(32));
+const challenge = base64URLEncode(sha256(verifier));
+
+var auth0AuthUrl;
+
+if (authMode === 'o' || authMode === 'oidc') {
+
+  auth0AuthUrl = 'https://' + configuration.globalOptions.auth0Domain + '/authorize?' +
+                 'response_type=code&' +
+                 'code_challenge='+ challenge + '&' +
+                 'code_challenge_method=S256&' + '&' +
+                 'client_id=' + configuration.authorisationOptions.oidc.auth0ClientId + '&' +
+                 'redirect_uri=' + webProtocol + '://' + configuration.globalOptions.serverHost + ':' + configuration.globalOptions.port + '/&' +
+                 'scope=openid%20email'
+} else {
+  auth0AuthUrl = 'https://' + configuration.globalOptions.auth0Domain + '/samlp/' + configuration.authorisationOptions.saml.auth0ClientId;
+}
+
+// Start authentication
+process.stdout.write('\n\x1b[36mOpening browser to authenticate user...\x1b[0m');
+open(auth0AuthUrl);
+
+const app = express();
+app.locals.title = 'Auth0 Authentication Handler';
+
+var data = [];
+
+// POST Method - used for SAML
+app.post('/', (req,res) => {
+  req
+    .on('data', d => {
+      data.push(d);
+    })
+    .on('end', () => {
+      data = decodeURIComponent(Buffer.concat(data).toString());
+      res.write(`<!doctype html>`);
+      res.write(`<html lang="en">`);
+      res.write(`  <head>`);
+      res.write(`    <title>Auth0 Authenticator for AWS CLI</title>`);
+      res.write(`    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/3.4.1/css/bootstrap.min.css" integrity="sha384-HSMxcRTRxnN+Bdg0JdbxYKrThecOKuH5zCYotlSAcp1+c8xmyTe9GYg1l9a69psu" crossorigin="anonymous">`);
+      res.write(`  </head>`);
+      res.write(`  <body style="margin-top: 10px">`);
+
+      if (data.substring(0, 12) === 'SAMLResponse') {
+        // Authentiction successful and SAML Assertion returned
+        var samlResponse = data.substring(13, data.indexOf('&'));
+        res.write(`	   <div class="center-block text-center alert alert-success" style="font-size: 15px"><b>Success!</b> You've been authenticated. You can close this browser page and go back to your terminal.</div>`);
+        res.statusCode = 201;
+        awsAuth(authMode, samlResponse);
+      } else if (data.length === 0){
+        // No response received
+        res.write(`	   <div class="center-block text-center alert alert-info" style="font-size: 15px"><b>Info!</b> No data received. Nothing to do.</div>`);
+        res.statusCode = 204;
+      } else {
+        // If anything else is returned
+        res.write(`	   <div class="center-block text-center alert alert-danger" style="font-size: 15px"><b>Error!</b> There was a problem authenticating. The response was as follows.</div>`);
+        res.write(`	   <div class="center-block text-center alert alert-danger" style="font-size: 15px">` + data + `</div>`);
+        res.statusCode = 400;
+      }
+
+      res.write(`  </body>`);
+      res.write(`</html>`);
+      res.end();
+      process.kill(process.pid, 'SIGTERM');
+    });
+});
+
+// GET Method - Used for OIDC
+app.get('/', (req, res) => {
+  req
+    .on('data', d => {
+      data.push(d);
+    })
+    .on("end", () => {
+      data = Buffer.concat(data).toString();
+
+      res.write(`<!doctype html>`);
+      res.write(`<html lang="en">`);
+      res.write(`  <head>`);
+      res.write(`    <title>Auth0 Authenticator for AWS CLI</title>`);
+      res.write(`    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/3.4.1/css/bootstrap.min.css" integrity="sha384-HSMxcRTRxnN+Bdg0JdbxYKrThecOKuH5zCYotlSAcp1+c8xmyTe9GYg1l9a69psu" crossorigin="anonymous">`);
+      res.write(`  </head>`);
+      res.write(`  <body style="margin-top: 10px">`);
+
+      if (req.query.code) {
+        res.write(`	   <div class="center-block text-center alert alert-success" style="font-size: 15px"><b>Success!</b> You've been authenticated. You can close this browser page and go back to your terminal.</div>`);
+        res.statusCode = 200;
+
+        const https = require('https');
+
+        const body = JSON.stringify({
+          'grant_type': 'authorization_code',
+          'client_id': configuration.authorisationOptions.oidc.auth0ClientId,
+          'code': req.query.code,
+          'code_verifier': verifier,
+          'redirect_uri': webProtocol + '://' + configuration.globalOptions.serverHost + ':' + configuration.globalOptions.port + '/'
+        });
+
+        const options = {
+          hostname: configuration.globalOptions.auth0Domain,
+          protocol: 'https:',
+          port: 443,
+          path: '/oauth/token',
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': body.length
+          }
+        }
+
+        var tokenData = [];
+        var idToken = "";
+
+        process.stdout.write('\x1b[36mRequesting id_token...\x1b[0m');
+
+        const tokenReq = https.request(options, tokenRes => {
+          tokenRes
+            .setEncoding('utf8')
+            .on('data', d => {
+              tokenData.push(d);
+            })
+            .on('end', () => {
+              tokenData = JSON.parse(tokenData);
+
+              if (tokenData.id_token) {
+                idToken = tokenData.id_token;
+                process.stdout.write('\x1b[32mDONE\x1b[0m\n');
+                if (debug) process.stdout.write('\x1b[33mINFO: id_token on next line...\n' + idToken + '\x1b[0m\n\n');
+
+                res.statusCode = 200;
+                awsAuth(authMode, idToken);
+              } else if (tokenData.error) {
+                process.stdout.write('\x1b[31mFAILED!\n');
+                process.stdout.write('\x1b[31mERROR: There was a problem getting an id_token. The response was as follows...\n');
+                process.stdout.write('Error: ' + tokenData.error + '\nDesription: ' + tokenData.error_description + '\x1b[0m\n');
+                res.statusCode = 403;
+              } else {
+                process.stdout.write('\x1b[31mError: Unexpected request not supported. Closing server and exiting.\x1b[0m\n');
+                res.write(`	   <div class="center-block text-center alert alert-warning" style="font-size: 15px"><b>Unexpected!</b> Request not supported. Closing server and exiting.</div>`);
+                res.statusCode = 405;
+              }
+            });
+        })
+        .on('error', function(err) {
+          process.stdout.write('\x1b[31mFAILED!\n');
+          process.stdout.write('There was a problem getting a token. The error returned is as follows:\n\n')
+          process.stdout.write(err + '\x1b[0m\n\n');
+        });
+        tokenReq.write(body);
+        tokenReq.end();
+      } else if (req.query.error) {
+        res.write(`	   <div class="center-block text-center alert alert-danger" style="font-size: 15px"><b>Error!</b> There was a problem authenticating. The response was as follows.</div>`);
+        res.write(`	   <div class="center-block text-center alert alert-danger" style="font-size: 15px">Error: ` + req.query.error + `</div>`);
+        res.write(`	   <div class="center-block text-center alert alert-danger" style="font-size: 15px">Desription: ` + req.query.error_description + `</div>`);
+        res.statusCode = 403;
+      } else {
+        // If anything else is returned
+        if (!data) {
+          data = 'No Data Received!';
+        }
+        res.write(`	   <div class="center-block text-center alert alert-danger" style="font-size: 15px"><b>Error!</b> There was an unexpected problem. The response was as follows.</div>`);
+        res.write(`	   <div class="center-block text-center alert alert-danger" style="font-size: 15px">` + data + `</div>`);
+        res.statusCode = 400;
+      }
+
+      res.write(`  </body>`);
+      res.write(`</html>`);
+      res.end();
+      process.kill(process.pid, 'SIGTERM');
+    })
+});
+
+var server;
+
+if (configuration.globalOptions.useTls === true) {
+  const privateKey = fs.readFileSync(configuration.globalOptions.privateKeyFile, 'utf8');
+  const certificate = fs.readFileSync(configuration.globalOptions.certificateFile, 'utf8');
+  const credentials = {
+    key: privateKey,
+    cert: certificate
+  }
+
+  server = https.createServer(credentials, app);
+} else {
+  server = http.createServer(app);
+}
+
+server.listen(configuration.globalOptions.port);
+server.keepAliveTimeout = 500;
+server.setTimeout(250);
+process.stdout.write('\x1b[32mDONE\x1b[0m\n');
+
+server.on("connection", function(socket) {
+  socket.setTimeout(250);
+})
+
+// Close the server when a terminate signal is received
+process.on('SIGTERM', () => {
+  server.close();
+});
+
+// End of main code  body
+
+//Supporting functions.
+
+function awsAuth(authMode, token) {
+  const exec = require('child_process').execSync;
+
+  var awsResponse = '';
+
+  if (authMode === 'oidc') {
+    process.stdout.write('\x1b[36mRetrieving email address from id_token...\x1b[0m');
+
+    jwt.verify(token, getKey, jwtOptions, function(error, claims) {
+      if(error) {
+        process.stdout.write('\x1b[31mFAILED\nERROR: There was a problem verifying the ID Token. Cannot continue. The details of the error are on the next line...\n' + error + '\x1b[0m\n\n');
+      }
+      process.stdout.write('\x1b[32mDONE\x1b[0m\n');
+
+      if (debug) process.stdout.write('\x1b[33mINFO: The claims in the id_token are as follows...\n' + JSON.stringify(claims) + '\x1b[0m\n\n');
+
+      process.stdout.write('\x1b[36mCalling AWS Secure Token Service (STS) using OIDC...\x1b[0m');
+      var awsCmd = 'aws sts assume-role-with-web-identity ' +
+                   '--role-arn ' + configuration.authorisationOptions.oidc.awsRoleArn + ' ' +
+                   '--web-identity-token ' + token + ' ' +
+                   '--role-session-name ' + claims.email
+
+      try {
+        awsResponse = exec(awsCmd);
+      } catch (error) {
+        process.stdout.write('\x1b[31mERROR\nassume-role-with-web-identity returned an error. The error is as follows:\n' + error + '\n\nCannot continue...EXITING\x1b[0m');
+        return;
+      }
+
+      process.stdout.write('\x1b[32mDONE\x1b[0m\n')
+      if (debug) process.stdout.write('\x1b[33mINFO: The response from AWS STS was as follows...\n' + awsResponse + '\x1b[0m\n\n');
+      createCredentialsFiles(JSON.parse(awsResponse));
+    });
+
+  } else {
+    process.stdout.write('\x1b[36mCalling AWS Secure Token Service (STS) using SAML...\x1b[0m');
+    var awsCmd = 'aws sts assume-role-with-saml ' +
+                 '--role-arn ' + configuration.authorisationOptions.saml.awsRoleArn + ' ' +
+                 '--principal-arn ' + configuration.authorisationOptions.saml.awsPrincipalArn + ' ' +
+                 '--saml-assertion ' + token;
+
+    try {
+      awsResponse = exec(awsCmd);
+    } catch (error) {
+      process.stdout.write('\x1b[31m' + error + '\nERROR: See above for details. Cannot continue...EXITING\x1b[0m');
+      return;
+    }
+
+    process.stdout.write('\x1b[32mDONE\x1b[0m\n')
+    if (debug) process.stdout.write('\x1b[33mINFO: The response from AWS STS was as follows...\n' + awsResponse + '\x1b[0m\n\n');
+    createCredentialsFiles(JSON.parse(awsResponse));
+  }
+  return;
+}
+
+function base64URLEncode(str) {
+    return str.toString('base64')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=/g, '');
+}
+
+function sha256(buffer) {
+    return crypto.createHash('sha256').update(buffer).digest();
+}
+
+function getKey(header, callback){
+  client.getSigningKey(header.kid, function(err, key) {
+    var signingKey = key.publicKey || key.rsaPublicKey;
+    callback(null, signingKey);
+  });
+}
+
+function createCredentialsFiles(awsResponse) {
+
+  process.stdout.write('\x1b[36mUpdating credentials...\x1b[0m');
+  const fileSpec = process.env.HOME + '/.aws/credentials';
+  const fileData = '[default]\n' +
+                   'aws_access_key_id = ' + awsResponse.Credentials.AccessKeyId + '\n' +
+                   'aws_secret_access_key = ' + awsResponse.Credentials.SecretAccessKey + '\n' +
+                   'aws_session_token = ' + awsResponse.Credentials.SessionToken
+
+  fs.writeFile(fileSpec, fileData, (error) => {
+    if (error) {
+      process.stdout.write('\x1b[31mERROR\nThere was an unexpected error writing the credentials file. The error is as follows:\n' + error + '\n\nCannot continue...EXITING\x1b[0m');
+      return;
+    }
+    if (debug) {
+      process.stdout.write('\x1b[32mDONE\n\x1b[33mINFO: The following credentials were written to config...\n' + fileData + '\n\nSuccessful completed authorisation. You may now run aws cli commands.\x1b[0m\n\n');
+    } else {
+      process.stdout.write('\x1b[32mDONE\n\n\x1b[33mSuccessfully completed authorisation. You may now run aws cli commands.\x1b[0m\n\n');
+    }
+  });
+  process.kill(process.pid, 'SIGTERM');
+  return;
+}
+
+function configManager(operation, parameter) {
+  //const readline = require('readline-sync');
+  const prompt = require('prompt-sync')();
+  const domainRegEx = new RegExp(/^((?!-))(xn--)?[a-z0-9][a-z0-9-_]{0,61}[a-z0-9]{0,1}\.(xn--)?(([a-z0-9\-]{1,61}|[a-z0-9-]{1,30}\.)+[a-z]{2,})$/);
+  const domainIpRegEx = new RegExp(/^(((?!-))(xn--)?[a-z0-9][a-z0-9-_]{0,61}[a-z0-9]{0,1}(\.(xn--)?(([a-z0-9\-]{1,61}|[a-z0-9-]{1,30}\.)+[a-z]{2,}))?)|((?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))$/);
+  const yesNoRegEx = new RegExp(/^[yYnN]$/);
+  const authZRegEx = new RegExp(/^[aAoOsS]$/);
+  const auth0ClientIdRegEx = new RegExp(/^[a-zA-Z0-9]{4,32}$/);
+  const oidcProvAwsArnRegEx = new RegExp(/^arn\:aws\:iam\:\:\d+\:oidc-provider\/((?!-))(xn--)?[a-z0-9][a-z0-9-_]{0,61}[a-z0-9]{0,1}\.(xn--)?(([a-z0-9\-]{1,61}|[a-z0-9-]{1,30}\.)+[a-z]{2,})\/?$/);
+  const samlProvAwsArnRegEx = new RegExp(/^arn\:aws\:iam\:\:\d+\:saml-provider\/[a-zA-Z0-9\.\_\-]+$/);
+  const roleAwsArnRegEx = new RegExp(/^arn\:aws\:iam\:\:\d+\:role\/[a-zA-Z0-9\+\=\,\.\@\-\_]+$/);
+  const defaultAuthZRegEx = new RegExp(/^[oOsSnN]$/);
+
+  var configuration = {
+    globalOptions : {},
+    authorisationOptions: {
+      oidc: {},
+      saml: {}
+    }
+  }
+
+  switch (operation) {
+    case 'new':
+
+      process.stdout.write('\x1b[33mN.B. Enter "q" at any prompt to quit.\x1b[0m\n\n');
+
+      // Collect global options.
+      process.stdout.write('\x1b[36mGlobal options...\x1b[0m\n');
+
+      var validInput;
+
+      do {
+        validInput = true;
+        var auth0_domain = prompt('\x1b[32mAuth0 tenant domain (e.g. tenant.eu.auth0.com): \x1b[0m');
+
+        // Check for "q" - user wishes to quit.
+        if (checkConfigExit(auth0_domain)) return;
+
+        // Input validation - starts with http(s)
+        if (auth0_domain.startsWith('http://') || auth0_domain.startsWith('https://')) {
+          process.stdout.write('\x1b[31m' + 'INVALID: Please enter the domain without the "http(s)://".\x1b[0m\n');
+          validInput = false;
+        }
+
+        // Input validation - trailing backslash
+        if (auth0_domain.endsWith('/')) {
+          process.stdout.write('\x1b[31mINVALID: Please enter the domain without the trailing /.\x1b[0m\n');
+          validInput = false;
+        }
+
+        // Input validation - Checks whether the entered domain is well formed.
+        if (!domainRegEx.test(auth0_domain) && validInput === true) {
+          process.stdout.write('\x1b[31mINVALID: Please enter a valid domain (e.g. tenant.eu.auth0.com).\x1b[0m\n');
+          validInput = false;
+        }
+      }
+      while (validInput === false)
+
+      do {
+        validInput = true;
+        var use_tls = prompt('\x1b[32mWould you like to use TLS (requires cert files)? [y/N]: \x1b[0m', 'n');
+
+        // Check for "q" - user wishes to quit.
+        if (checkConfigExit(use_tls)) return;
+
+        // Input validation - yes (Y) or no (n)
+        if (!yesNoRegEx.test(use_tls)) {
+          process.stdout.write('\x1b[31mINVALID: Please enter y or n.\x1b[0m\n');
+          validInput = false;
+        }
+      }
+      while (validInput === false)
+
+      use_tls = (use_tls.toLowerCase() === 'y');
+
+      if (use_tls) {
+        process.stdout.write('\n\x1b[36mPlease enter to full path of the private key and certificate files.\x1b[0m\n');
+        do {
+          validInput = true;
+          var private_key = prompt('\x1b[32mprivate key: \x1b[0m');
+
+          // Check for "q" - user wishes to quit.
+          if (checkConfigExit(private_key)) return;
+
+          // Input validation - private key file location.
+          if (!fs.existsSync(private_key)) {
+            process.stdout.write('\x1b[31mINVALID: Key file not found.\x1b[0m\n');
+            validInput = false;
+          }
+        }
+        while (validInput === false)
+
+        do {
+          validInput = true;
+          var certificate = prompt('\x1b[32mcertificate: \x1b[0m');
+
+          // Check for "q" - user wishes to quit.
+          if (checkConfigExit(certificate)) return;
+
+          // Input validation - private key file location.
+          if (!fs.existsSync(certificate)) {
+            process.stdout.write('\x1b[31mINVALID: Certificate file not found.\x1b[0m\n');
+            validInput = false;
+          }
+        }
+        while (validInput === false)
+      }
+
+      process.stdout.write('\n\x1b[33mPlease enter the domain name and port that Auth0 will return the ID Token,\nor SAML assertion to. This must be...\n\n');
+      process.stdout.write('  (a) defined as an Allowed Callback URL (OIDC) or the Application\n');
+      process.stdout.write('      callback URL (SAML) in Auth0.\n');
+      process.stdout.write('  (b) accessible from the local machine. If localhost is not being used, add');
+      process.stdout.write('      the domain to the /etc/hosts file (or equivalent).\x1b[0m\n\n');
+
+      do {
+        validInput = true;
+        if (use_tls) {
+          var server_host = prompt('\x1b[32mlocal server host name: \x1b[0m');
+        } else {
+          var server_host = prompt('\x1b[32mlocal server host name [localhost]: \x1b[0m', 'localhost');
+        }
+
+        // Check for "q" - user wishes to quit.
+        if (checkConfigExit(server_host)) return;
+
+        // Input validation - Checks whether the entered host is well formed, or an IP address.
+        if (!domainIpRegEx.test(server_host)) {
+          process.stdout.write('\x1b[31mINVALID: Please enter a valid host (e.g. localhost, app.acmecorp.com, 127.0.0.1).\x1b[0m\n');
+          validInput = false;
+        }
+      }
+      while (validInput === false)
+
+      do {
+        validInput = true;
+        if (use_tls) {
+          var server_port = prompt('\x1b[32mport [8443]: \x1b[0m', '8443');
+        } else {
+          var server_port = prompt('\x1b[32mport [8080]: \x1b[0m', '8080');
+        }
+
+        // Check for "q" - user wishes to quit.
+        if (checkConfigExit(server_port)) return;
+
+        // Input validation - Checks whether the entered host is well formed, or an IP address.
+        if (server_port < 1 || server_port > 65536) {
+          process.stdout.write('\x1b[31mINVALID: Please enter a valid port (e.g. 8080, 8443 etc.).\x1b[0m\n');
+          validInput = false;
+        }
+      }
+      while (validInput === false)
+
+      do {
+        validInput = true;
+        var debug = prompt('\x1b[32mWould you like to enable debugging (verbose output)? [y/N]: \x1b[0m', 'n');
+
+        // Check for "q" - user wishes to quit.
+        if (checkConfigExit(debug)) return;
+
+        // Input validation - yes (Y) or no (n)
+        if (!yesNoRegEx.test(debug)) {
+          process.stdout.write('\x1b[31mINVALID: Please enter y or n.\x1b[0m\n');
+          validInput = false;
+        }
+      }
+      while (validInput === false)
+
+      debug = (debug.toLowerCase() === 'y');
+
+      // Collect authorisation options.
+      process.stdout.write('\n\x1b[36mAuthorisation options...\n');
+
+      do {
+        validInput = true;
+        var authz_protocol = prompt('\x1b[32mAuthorisation protcol to configure (OIDC/SAML/All)? [O/s/a]: \x1b[0m', 'o');
+
+        // Check for "q" - user wishes to quit.
+        if (checkConfigExit(authz_protocol)) return;
+
+        // Input validation - yes (Y) or no (n)
+        if (!authZRegEx.test(authz_protocol)) {
+          process.stdout.write('\x1b[31mINVALID: Please enter o,s or a. Default (no entry) is o (OIDC).\x1b[0m\n');
+          validInput = false;
+        }
+      }
+      while (validInput === false)
+
+      if (authz_protocol.toLowerCase() === 'o' || authz_protocol.toLowerCase() === 'a') {
+        process.stdout.write('\n\x1b[36mOpenID Connect Configuration...\x1b[0m\n');
+        do {
+          validInput = true;
+          var oidc_clientid = prompt('\x1b[32mAuth0 ClientID (OIDC Client): \x1b[0m');
+
+          // Check for "q" - user wishes to quit.
+          if (checkConfigExit(oidc_clientid)) return;
+
+          // Input validation - valid ARN
+          if (!auth0ClientIdRegEx.test(oidc_clientid)) {
+            process.stdout.write('\x1b[31mINVALID: Please enter a valid Auth0 ClientID.\x1b[0m\n');
+            validInput = false;
+          }
+        }
+        while (validInput === false)
+
+        process.stdout.write('\n\x1b[33mPlease enter ther AWS Role ARNs. Format is as follows:\n\n');
+        process.stdout.write('  Role: arn:aws:iam::<acct-number>:role/<role-name>\x1b[0m\n\n');
+
+        do {
+          validInput = true;
+          var oidc_role_arn = prompt('\x1b[32mRole: \x1b[0m');
+
+          // Check for "q" - user wishes to quit.
+          if (checkConfigExit(oidc_role_arn)) return;
+
+          // Input validation - valid ARN
+          if (!roleAwsArnRegEx.test(oidc_role_arn)) {
+            process.stdout.write('\x1b[31mINVALID. Incorrect Role ARN format.\x1b[0m\n');
+            validInput = false;
+          }
+        }
+        while (validInput === false)
+      }
+
+      if (authz_protocol.toLowerCase() === 's' || authz_protocol.toLowerCase() === 'a') {
+        process.stdout.write('\n\x1b[36mSAML Configuration...\n');
+        do {
+          validInput = true;
+          var saml_clientid = prompt('\x1b[32mAuth0 ClientID (SAML Client): \x1b[0m');
+
+          // Check for "q" - user wishes to quit.
+          if (checkConfigExit(saml_clientid)) return;
+
+          // Input validation - valid ARN
+          if (!auth0ClientIdRegEx.test(saml_clientid)) {
+            process.stdout.write('\x1b[31mINVALID. Enter a valid Auth0 ClientID.\x1b[0m\n');
+            validInput = false;
+          }
+        }
+        while (validInput === false)
+
+
+        process.stdout.write('\n\x1b[33mPlease enter ther AWS SAML Identity Provider and Role ARNs. Format is as\nfollows:\n\n');
+        process.stdout.write('  IdP:  arn:aws:iam::<acct-number>:saml-provider/<provider-name>\n');
+        process.stdout.write('  Role: arn:aws:iam::<acct-number>:role/<role-name>\x1b[0m\n\n');
+
+        do {
+          validInput = true;
+          var saml_prov_arn = prompt('\x1b[32mIdP: \x1b[0m');
+
+          // Check for "q" - user wishes to quit.
+          if (checkConfigExit(saml_prov_arn)) return;
+
+          // Input validation - valid ARN
+          if (!samlProvAwsArnRegEx.test(saml_prov_arn)) {
+            process.stdout.write('\x1b[31mINVALID. Incorrect SAML provider ARN format.\x1b[0m\n');
+            validInput = false;
+          }
+        }
+        while (validInput === false)
+
+        do {
+          validInput = true;
+          var saml_role_arn = prompt('\x1b[32mRole: \x1b[0m');
+
+          // Check for "q" - user wishes to quit.
+          if (checkConfigExit(saml_role_arn)) return;
+
+          // Input validation - valid ARN
+          if (!roleAwsArnRegEx.test(saml_role_arn)) {
+            process.stdout.write('\x1b[31mINVALID. Incorrect Role ARN format.\x1b[0m\n');
+            validInput = false;
+          }
+        }
+        while (validInput === false)
+
+      }
+
+      // If both OIDC AND SAML have been configured prompt the user with an option to specify a default option.
+      if (authz_protocol === 'a') {
+        do {
+          validInput = true;
+          var default_authz = prompt('\x1b[32m\nDefault authorisation protocol [O/s/n]: \x1b[0m', 'o');
+
+          // Check for "q" - user wishes to quit.
+          if (checkConfigExit(default_authz)) return;
+
+          // Input validation - valid ARN
+          if (!defaultAuthZRegEx.test(default_authz)) {
+            process.stdout.write('\x1b[31mINVALID. Please enter one of the following options:\n');
+            process.stdout.write('  o|O - oidc');
+            process.stdout.write('  s|S - saml');
+            process.stdout.write('  n|N - none\x1b[0m\n\n');
+            validInput = false;
+          }
+        }
+        while (validInput === false)
+      }
+
+
+
+
+      // Add new values into configuration object
+      configuration.globalOptions.auth0Domain = auth0_domain;
+      configuration.globalOptions.useTls = use_tls;
+
+      if (use_tls) {
+        configuration.globalOptions.privateKeyFile = private_key;
+        configuration.globalOptions.certificateFile = certificate;
+      } else {
+        configuration.globalOptions.privateKeyFile = '';
+        configuration.globalOptions.certificateFile = '';
+      }
+
+      configuration.globalOptions.serverHost = server_host;
+      configuration.globalOptions.port = server_port;
+      configuration.globalOptions.awsProfile = 'default';
+      configuration.globalOptions.jwtAlgorithm = 'RS256';
+      configuration.globalOptions.debug = debug;
+
+      if (authz_protocol.toLowerCase() === 'o' || authz_protocol.toLowerCase() === 'a') {
+        configuration.authorisationOptions.oidc.auth0ClientId = oidc_clientid
+        //configuration.authorisationOptions.oidc.awsPrincipalArn = oidc_prov_arn
+        configuration.authorisationOptions.oidc.awsRoleArn = oidc_role_arn
+      }
+
+      if (authz_protocol.toLowerCase() === 's' || authz_protocol.toLowerCase() === 'a') {
+        configuration.authorisationOptions.saml.auth0ClientId = saml_clientid
+        configuration.authorisationOptions.saml.awsPrincipalArn = saml_prov_arn
+        configuration.authorisationOptions.saml.awsRoleArn = saml_role_arn
+      }
+
+      if (default_authz) {
+        switch (default_authz.toLowerCase()) {
+          case 'o':
+            configuration.authorisationOptions.defaultProtocol = 'oidc';
+            break;
+          case 's':
+            configuration.authorisationOptions.defaultProtocol = 'saml';
+            break;
+          case 'n':
+            configuration.authorisationOptions.defaultProtocol = 'none';
+            break;
+        }
+      }
+
+      console.log(configuration);
+
+      const data = JSON.stringify(configuration, null, 2);
+
+      try {
+          fs.writeFileSync(configFile, data);
+          console.log("JSON data is saved.");
+      } catch (error) {
+          console.error(error);
+      }
+
+      return;
+
+
+      // Bailout if there's an input error.
+      if (!validInput) return;
+
+      //if (readline.keyInYN('Would you like to use TLS (requires cert files): ')) {
+      //  use_tls = true;
+      //} else {
+      //  use_tls = false;
+      //};
+
+      process.stdout.write(auth0_domain + '\n');
+      process.stdout.write(use_tls + '\n');
+
+
+      break;
+    case 'show':
+      break;
+    case 'update':
+      break;
+  }
+  console.log('Not implemented yet');
+  return;
+}
+
+function checkConfigExit(userInput) {
+  // Check for "q" - user wishes to quit.
+  if (userInput.toLowerCase() === 'q') {
+    process.stdout.write('\x1b[37mINFO: Quitting configuration manager. Nothing will be changed.\n\n');
+    return(true);
+  } else {
+    return(false);
+  }
+}
+
+
+function getGlobalOptions() {
+
+  var validInput;
+
+  var auth0_domain = readline.question('Auth0 tenant domain (e.g. tenant.eu.auth0.com): ');
+  var use_tls = readline.question('Would you like to use TLS (requires cert files): ');
+
+
+
+
+  //rl.question('Auth0 tenant domain (e.g. tenant.eu.auth0.com): ', function(auth0_domain) {
+  //  auth0-domain.toLowerCase();
+  //  validInput = true;
+  //  rl.close;
+  //});
+
+
+//  auth0_domain => {
+//    auth0-domain.toLowerCase();
+//    validInput = true;
+
+//    if (auth0_domain.startsWith('http://') || auth0_domain.startsWith('https://')) {
+//      process.stdout.write('ERROR: please enter the domain without the "http(s)://".\n');
+//      validInput = false;
+//    }
+
+    //if (auth0-domain.endsWith('/') {
+    //  process.stdout.write('ERROR: please enter the domain without the trailing /.\n');
+    //  validInput = false;
+    //}
+
+    //if (!validInput) {
+    //  getAuth0Config();
+    //} else {
+//      rl.close;
+    //}
+//  })
+
+
+}
